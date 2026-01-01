@@ -5,7 +5,7 @@ import { ArrowLeft, Pause, Play, Send, Mic, MicOff, Volume2, VolumeX, CheckCircl
 import CosmicBackground from "@/components/ui/CosmicBackground";
 import GlowCard from "@/components/ui/GlowCard";
 import NeonButton from "@/components/ui/NeonButton";
-import AITutorAvatar from "@/components/AITutorAvatar";
+import VideoAvatar from "@/components/VideoAvatar";
 import { useToast } from "@/hooks/use-toast";
 
 type SessionPhase = "pre" | "teaching" | "post" | "quiz" | "complete";
@@ -237,10 +237,10 @@ const Session = () => {
       case "teaching":
         return (
           <div className="grid lg:grid-cols-3 gap-6 h-full">
-            {/* AI Tutor */}
+            {/* AI Tutor Video Avatar */}
             <div className="lg:col-span-1">
-              <GlowCard className="h-full flex flex-col items-center justify-center p-8">
-                <AITutorAvatar isSessionMode />
+              <GlowCard className="h-full flex flex-col items-center justify-center p-6">
+                <VideoAvatar isSpeaking={!isPaused} className="w-full aspect-[3/4]" />
               </GlowCard>
             </div>
 
