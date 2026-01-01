@@ -1,12 +1,19 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Pause, Play, Send, Mic, MicOff, Volume2, VolumeX, CheckCircle, XCircle, Award, RotateCcw } from "lucide-react";
+import { useConversation } from "@elevenlabs/react";
+import { 
+  ArrowLeft, Pause, Play, Send, Mic, MicOff, Volume2, VolumeX, 
+  CheckCircle, XCircle, Award, RotateCcw, Phone, PhoneOff,
+  RefreshCw, Languages, Gauge, HelpCircle
+} from "lucide-react";
 import CosmicBackground from "@/components/ui/CosmicBackground";
 import GlowCard from "@/components/ui/GlowCard";
 import NeonButton from "@/components/ui/NeonButton";
 import VideoAvatar from "@/components/VideoAvatar";
 import { useToast } from "@/hooks/use-toast";
+
+const AGENT_ID = "agent_8001kdx2vrjdf4tamc70zbtjmd4e";
 
 type SessionPhase = "pre" | "teaching" | "post" | "quiz" | "complete";
 
@@ -24,13 +31,59 @@ const Session = () => {
   const [timeLeft, setTimeLeft] = useState(40 * 60); // 40 minutes
   const [isPaused, setIsPaused] = useState(true);
   const [message, setMessage] = useState("");
-  const [isListening, setIsListening] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [chatHistory, setChatHistory] = useState<Array<{ role: "user" | "ai"; content: string }>>([]);
   const [preAnswers, setPreAnswers] = useState<string[]>([]);
   const [currentQuizQuestion, setCurrentQuizQuestion] = useState(0);
   const [quizAnswers, setQuizAnswers] = useState<number[]>([]);
   const [showConfetti, setShowConfetti] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [confidenceLevel, setConfidenceLevel] = useState<number | null>(null);
+
+  // ElevenLabs conversation hook
+  const conversation = useConversation({
+    onConnect: () => {
+      console.log("Connected to Priya AI");
+      toast({
+        title: "Connected to Priya AI 🎓",
+        description: "Your AI tutor is ready. Start speaking!",
+      });
+      setIsPaused(false);
+    },
+    onDisconnect: () => {
+      console.log("Disconnected from Priya AI");
+      setIsPaused(true);
+    },
+    onMessage: (message: unknown) => {
+      console.log("Message from Priya:", message);
+      const msg = message as Record<string, unknown>;
+      if (msg.type === "agent_response") {
+        const event = msg.agent_response_event as Record<string, string> | undefined;
+        setChatHistory((prev) => [
+          ...prev,
+          { role: "ai", content: event?.agent_response || "" },
+        ]);
+      } else if (msg.type === "user_transcript") {
+        const event = msg.user_transcription_event as Record<string, string> | undefined;
+        setChatHistory((prev) => [
+          ...prev,
+          { role: "user", content: event?.user_transcript || "" },
+        ]);
+      }
+    },
+    onError: (error) => {
+      console.error("Conversation error:", error);
+      toast({
+        variant: "destructive",
+        title: "Connection Error",
+        description: "Failed to connect to Priya AI. Please try again.",
+      });
+      setIsConnecting(false);
+    },
+  });
+
+  const isConnected = conversation.status === "connected";
+  const isSpeaking = conversation.isSpeaking;
 
   const preSessionQuestions = [
     "What do you already know about Quadratic Equations?",
@@ -101,6 +154,36 @@ const Session = () => {
     },
   ];
 
+  // Start conversation with Priya AI
+  const startConversation = useCallback(async () => {
+    setIsConnecting(true);
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      await conversation.startSession({
+        agentId: AGENT_ID,
+        connectionType: "webrtc",
+      });
+    } catch (error) {
+      console.error("Failed to start conversation:", error);
+      toast({
+        variant: "destructive",
+        title: "Microphone Access Required",
+        description: "Please enable microphone access to talk with Priya AI.",
+      });
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [conversation, toast]);
+
+  const stopConversation = useCallback(async () => {
+    await conversation.endSession();
+    toast({
+      title: "Session Paused",
+      description: "Priya AI has been disconnected.",
+    });
+  }, [conversation, toast]);
+
   useEffect(() => {
     if (!isPaused && phase === "teaching" && timeLeft > 0) {
       const timer = setInterval(() => {
@@ -109,6 +192,16 @@ const Session = () => {
       return () => clearInterval(timer);
     }
   }, [isPaused, phase, timeLeft]);
+
+  // Auto-transition to post phase when time runs out
+  useEffect(() => {
+    if (timeLeft === 0 && phase === "teaching") {
+      setPhase("post");
+      if (isConnected) {
+        stopConversation();
+      }
+    }
+  }, [timeLeft, phase, isConnected, stopConversation]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -121,19 +214,10 @@ const Session = () => {
 
     setChatHistory((prev) => [...prev, { role: "user", content: message }]);
     
-    // Simulate AI response
-    setTimeout(() => {
-      const responses = [
-        "Great question! Let me explain this with a visual diagram...",
-        "Excellent! That shows you're understanding the concept well. Now let's dive deeper...",
-        "I see what you mean. Let me break this down step by step...",
-        "Perfect! You're making great progress. Here's another way to think about it...",
-      ];
-      setChatHistory((prev) => [
-        ...prev,
-        { role: "ai", content: responses[Math.floor(Math.random() * responses.length)] },
-      ]);
-    }, 1000);
+    // Send to ElevenLabs if connected
+    if (isConnected) {
+      conversation.sendUserMessage(message);
+    }
 
     setMessage("");
   };
@@ -143,11 +227,12 @@ const Session = () => {
     if (preAnswers.length >= preSessionQuestions.length - 1) {
       setTimeout(() => {
         setPhase("teaching");
-        setIsPaused(false);
         toast({
-          title: "Session Started! 🚀",
-          description: "Your 40-minute learning session has begun.",
+          title: "Session Starting! 🚀",
+          description: "Connecting you with Priya AI...",
         });
+        // Auto-start conversation when entering teaching phase
+        startConversation();
       }, 1000);
     }
   };
@@ -172,6 +257,14 @@ const Session = () => {
     return correct;
   };
 
+  // Quick action buttons for the session
+  const quickActions = [
+    { icon: RefreshCw, label: "Explain again", action: () => conversation.sendUserMessage("Can you explain that again?") },
+    { icon: HelpCircle, label: "Give example", action: () => conversation.sendUserMessage("Can you give me a real-life example?") },
+    { icon: Gauge, label: "Slow down", action: () => conversation.sendUserMessage("Please slow down a bit.") },
+    { icon: Languages, label: "Switch to Hindi", action: () => conversation.sendUserMessage("Please explain in Hindi.") },
+  ];
+
   const renderPhaseContent = () => {
     switch (phase) {
       case "pre":
@@ -183,111 +276,228 @@ const Session = () => {
           >
             <GlowCard>
               <div className="text-center mb-6">
-                <h2 className="text-2xl font-poppins font-bold text-white mb-2">Before We Begin... 🎯</h2>
-                <p className="text-gray-400">Let's understand your current knowledge</p>
+                <h2 className="text-2xl font-poppins font-bold text-foreground mb-2">Before We Begin... 🎯</h2>
+                <p className="text-muted-foreground">Priya AI wants to understand your current knowledge</p>
               </div>
 
-              <div className="space-y-6">
-                {preSessionQuestions.map((q, idx) => (
-                  <motion.div
-                    key={idx}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: idx <= preAnswers.length ? 1 : 0.5, x: 0 }}
-                    transition={{ delay: idx * 0.2 }}
-                  >
-                    <p className="text-gray-200 mb-3">{idx + 1}. {q}</p>
-                    {idx === preAnswers.length ? (
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="Type your answer..."
-                          className="flex-1 px-4 py-3 rounded-xl bg-slate-800/80 border-2 border-cyan-400/20 text-white placeholder-gray-500 focus:border-cyan-400/60 focus:outline-none"
-                          onKeyPress={(e) => {
-                            if (e.key === "Enter") {
-                              handlePreAnswerSubmit((e.target as HTMLInputElement).value);
-                              (e.target as HTMLInputElement).value = "";
-                            }
-                          }}
-                        />
-                        <NeonButton
-                          onClick={() => {
-                            const input = document.querySelector('input[placeholder="Type your answer..."]') as HTMLInputElement;
-                            if (input?.value) {
-                              handlePreAnswerSubmit(input.value);
-                              input.value = "";
-                            }
-                          }}
-                          size="sm"
-                        >
-                          <Send className="w-4 h-4" />
-                        </NeonButton>
-                      </div>
-                    ) : idx < preAnswers.length ? (
-                      <p className="text-cyan-400 text-sm pl-4 border-l-2 border-cyan-400/40">
-                        {preAnswers[idx]}
-                      </p>
-                    ) : null}
-                  </motion.div>
-                ))}
-              </div>
+              {/* Confidence Scale */}
+              {confidenceLevel === null && (
+                <motion.div 
+                  className="mb-8"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                >
+                  <p className="text-foreground mb-3">How confident do you feel about this topic? (1-5)</p>
+                  <div className="flex gap-2 justify-center">
+                    {[1, 2, 3, 4, 5].map((level) => (
+                      <motion.button
+                        key={level}
+                        onClick={() => setConfidenceLevel(level)}
+                        className="w-12 h-12 rounded-xl bg-cosmic-card border-2 border-cyan-400/30 text-foreground font-bold hover:border-cyan-400 hover:bg-cyan-400/10 transition-all"
+                        whileHover={{ scale: 1.1 }}
+                        whileTap={{ scale: 0.95 }}
+                      >
+                        {level}
+                      </motion.button>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+
+              {confidenceLevel !== null && (
+                <div className="space-y-6">
+                  {preSessionQuestions.map((q, idx) => (
+                    <motion.div
+                      key={idx}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: idx <= preAnswers.length ? 1 : 0.5, x: 0 }}
+                      transition={{ delay: idx * 0.2 }}
+                    >
+                      <p className="text-foreground mb-3">{idx + 1}. {q}</p>
+                      {idx === preAnswers.length ? (
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="Type your answer..."
+                            className="flex-1 px-4 py-3 rounded-xl bg-cosmic-card border-2 border-cyan-400/20 text-foreground placeholder-muted-foreground focus:border-cyan-400/60 focus:outline-none"
+                            onKeyPress={(e) => {
+                              if (e.key === "Enter") {
+                                handlePreAnswerSubmit((e.target as HTMLInputElement).value);
+                                (e.target as HTMLInputElement).value = "";
+                              }
+                            }}
+                          />
+                          <NeonButton
+                            onClick={() => {
+                              const input = document.querySelector('input[placeholder="Type your answer..."]') as HTMLInputElement;
+                              if (input?.value) {
+                                handlePreAnswerSubmit(input.value);
+                                input.value = "";
+                              }
+                            }}
+                            size="sm"
+                          >
+                            <Send className="w-4 h-4" />
+                          </NeonButton>
+                        </div>
+                      ) : idx < preAnswers.length ? (
+                        <p className="text-cyan-400 text-sm pl-4 border-l-2 border-cyan-400/40">
+                          {preAnswers[idx]}
+                        </p>
+                      ) : null}
+                    </motion.div>
+                  ))}
+                </div>
+              )}
             </GlowCard>
           </motion.div>
         );
 
       case "teaching":
         return (
-          <div className="grid lg:grid-cols-3 gap-6 h-full">
-            {/* AI Tutor Video Avatar */}
-            <div className="lg:col-span-1">
-              <GlowCard className="h-full flex flex-col items-center justify-center p-6">
-                <VideoAvatar isSpeaking={!isPaused} className="w-full aspect-[3/4]" />
+          <div className="grid lg:grid-cols-12 gap-4 h-full">
+            {/* Left Panel - AI Tutor Video Avatar */}
+            <div className="lg:col-span-3">
+              <GlowCard className="h-full flex flex-col p-4">
+                <VideoAvatar isSpeaking={isSpeaking} className="w-full aspect-[3/4] mb-4" />
+                
+                {/* Connection status */}
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  <motion.div 
+                    className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-gray-500'}`}
+                    animate={isConnected ? { scale: [1, 1.2, 1] } : {}}
+                    transition={{ duration: 1, repeat: Infinity }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    {isConnected ? "Live with Priya AI" : "Disconnected"}
+                  </span>
+                </div>
+
+                {/* Voice control button */}
+                {!isConnected ? (
+                  <NeonButton 
+                    onClick={startConversation} 
+                    disabled={isConnecting}
+                    className="w-full"
+                    size="sm"
+                  >
+                    {isConnecting ? (
+                      <>
+                        <motion.div 
+                          className="w-4 h-4 border-2 border-foreground/30 border-t-foreground rounded-full mr-2"
+                          animate={{ rotate: 360 }}
+                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        />
+                        Connecting...
+                      </>
+                    ) : (
+                      <>
+                        <Phone className="w-4 h-4 mr-2" />
+                        Connect to Priya
+                      </>
+                    )}
+                  </NeonButton>
+                ) : (
+                  <motion.button
+                    onClick={stopConversation}
+                    className="w-full py-2 px-4 rounded-xl border border-red-500/50 text-red-400 hover:bg-red-500/10 transition-all text-sm flex items-center justify-center gap-2"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    <PhoneOff className="w-4 h-4" />
+                    End Session
+                  </motion.button>
+                )}
+
+                {/* Speaking indicator */}
+                <AnimatePresence>
+                  {isSpeaking && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      className="mt-3 flex items-center justify-center gap-2"
+                    >
+                      <div className="flex gap-1">
+                        {[...Array(4)].map((_, i) => (
+                          <motion.div
+                            key={i}
+                            className="w-1 bg-cyan-400 rounded-full"
+                            animate={{ height: [8, 20, 8] }}
+                            transition={{ duration: 0.5, repeat: Infinity, delay: i * 0.1 }}
+                          />
+                        ))}
+                      </div>
+                      <span className="text-xs text-cyan-400">Priya is speaking...</span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </GlowCard>
             </div>
 
-            {/* Teaching Content */}
-            <div className="lg:col-span-2 flex flex-col gap-4">
+            {/* Center Panel - Teaching Content / Slide Area */}
+            <div className="lg:col-span-6 flex flex-col gap-4">
               {/* Visual Teaching Area */}
-              <GlowCard className="flex-1 min-h-[300px]">
+              <GlowCard className="flex-1 min-h-[350px]">
                 <div className="h-full flex flex-col">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-poppins font-bold text-white">Quadratic Equations</h3>
-                    <span className="text-xs text-cyan-400 bg-cyan-400/10 px-3 py-1 rounded-full">
+                    <h3 className="font-poppins font-bold text-foreground">Quadratic Equations</h3>
+                    <span className="text-xs text-cyan-400 bg-cyan-400/10 px-3 py-1 rounded-full flex items-center gap-2">
+                      <motion.div 
+                        className="w-2 h-2 rounded-full bg-cyan-400"
+                        animate={{ opacity: [1, 0.5, 1] }}
+                        transition={{ duration: 1.5, repeat: Infinity }}
+                      />
                       Live Teaching
                     </span>
                   </div>
 
-                  {/* Animated Diagram Placeholder */}
-                  <div className="flex-1 rounded-xl bg-gradient-to-br from-slate-800/50 to-slate-900/50 border border-gray-700/50 flex items-center justify-center relative overflow-hidden">
+                  {/* Animated Diagram / Slide Area */}
+                  <div className="flex-1 rounded-xl bg-gradient-to-br from-cosmic-card/50 to-cosmic-dark/50 border border-border/50 flex items-center justify-center relative overflow-hidden">
                     <motion.div
-                      className="text-center"
+                      className="text-center px-8"
                       animate={{ y: [0, -10, 0] }}
                       transition={{ duration: 3, repeat: Infinity }}
                     >
-                      <div className="text-4xl mb-4">📊</div>
-                      <p className="text-xl font-mono text-cyan-400">ax² + bx + c = 0</p>
-                      <p className="text-gray-400 mt-2">Interactive diagram showing here...</p>
+                      <div className="text-5xl mb-6">📊</div>
+                      <motion.p 
+                        className="text-3xl font-mono text-cyan-400 mb-4"
+                        animate={{ textShadow: ["0 0 10px rgba(0,242,234,0.5)", "0 0 30px rgba(0,242,234,0.8)", "0 0 10px rgba(0,242,234,0.5)"] }}
+                        transition={{ duration: 2, repeat: Infinity }}
+                      >
+                        ax² + bx + c = 0
+                      </motion.p>
+                      <p className="text-muted-foreground">Interactive diagrams appear here during teaching</p>
                     </motion.div>
 
-                    {/* Floating elements */}
+                    {/* Floating formula elements */}
                     <motion.div
-                      className="absolute top-4 left-4 text-sm text-gray-400 bg-slate-800/80 px-3 py-1 rounded-full"
+                      className="absolute top-4 left-4 text-sm text-muted-foreground bg-cosmic-card/80 px-3 py-1.5 rounded-full border border-cyan-400/20"
                       animate={{ opacity: [0.5, 1, 0.5] }}
                       transition={{ duration: 2, repeat: Infinity }}
                     >
                       Discriminant: b² - 4ac
+                    </motion.div>
+                    <motion.div
+                      className="absolute bottom-4 right-4 text-sm text-muted-foreground bg-cosmic-card/80 px-3 py-1.5 rounded-full border border-purple-400/20"
+                      animate={{ opacity: [0.5, 1, 0.5] }}
+                      transition={{ duration: 2, repeat: Infinity, delay: 1 }}
+                    >
+                      Roots: x = (-b ± √Δ) / 2a
                     </motion.div>
                   </div>
                 </div>
               </GlowCard>
 
               {/* Chat Interface */}
-              <GlowCard className="h-80">
+              <GlowCard className="h-64">
                 <div className="h-full flex flex-col">
                   {/* Chat History */}
-                  <div className="flex-1 overflow-y-auto space-y-3 mb-4">
+                  <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
                     {chatHistory.length === 0 ? (
-                      <div className="text-center text-gray-500 py-8">
-                        <p>Ask questions or discuss concepts with your AI Tutor</p>
+                      <div className="text-center text-muted-foreground py-8">
+                        <Mic className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        <p>Speak or type to interact with Priya AI</p>
                       </div>
                     ) : (
                       chatHistory.map((msg, idx) => (
@@ -298,7 +508,7 @@ const Session = () => {
                           className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                         >
                           <div
-                            className={`max-w-[80%] px-4 py-2 rounded-2xl ${
+                            className={`max-w-[85%] px-4 py-2 rounded-2xl text-sm ${
                               msg.role === "user"
                                 ? "bg-cyan-400/20 text-cyan-100 border border-cyan-400/30"
                                 : "bg-purple-400/20 text-purple-100 border border-purple-400/30"
@@ -313,29 +523,74 @@ const Session = () => {
 
                   {/* Input */}
                   <div className="flex gap-2">
-                    <motion.button
-                      onClick={() => setIsListening(!isListening)}
-                      className={`p-3 rounded-xl ${
-                        isListening ? "bg-cyan-400/20 text-cyan-400" : "bg-slate-800 text-gray-400"
-                      } border border-gray-700`}
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                    >
-                      {isListening ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
-                    </motion.button>
                     <input
                       type="text"
                       value={message}
                       onChange={(e) => setMessage(e.target.value)}
                       onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-                      placeholder="Type your question..."
-                      className="flex-1 px-4 py-3 rounded-xl bg-slate-800/80 border border-gray-700 text-white placeholder-gray-500 focus:border-cyan-400/60 focus:outline-none"
+                      placeholder={isConnected ? "Type or speak your question..." : "Connect to Priya to chat..."}
+                      className="flex-1 px-4 py-2.5 rounded-xl bg-cosmic-card border border-border text-foreground placeholder-muted-foreground focus:border-cyan-400/60 focus:outline-none text-sm"
+                      disabled={!isConnected}
                     />
-                    <NeonButton onClick={handleSendMessage}>
-                      <Send className="w-5 h-5" />
+                    <NeonButton onClick={handleSendMessage} disabled={!isConnected} size="sm">
+                      <Send className="w-4 h-4" />
                     </NeonButton>
                   </div>
                 </div>
+              </GlowCard>
+            </div>
+
+            {/* Right Panel - Quick Actions */}
+            <div className="lg:col-span-3">
+              <GlowCard className="h-full flex flex-col p-4">
+                <h4 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
+                  <HelpCircle className="w-4 h-4 text-cyan-400" />
+                  Quick Actions
+                </h4>
+
+                <div className="space-y-2 flex-1">
+                  {quickActions.map((action, idx) => (
+                    <motion.button
+                      key={idx}
+                      onClick={action.action}
+                      disabled={!isConnected}
+                      className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-cosmic-card border border-border/50 text-foreground hover:border-cyan-400/50 hover:bg-cyan-400/5 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                      whileHover={{ scale: 1.02, x: 5 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      <action.icon className="w-4 h-4 text-cyan-400" />
+                      {action.label}
+                    </motion.button>
+                  ))}
+                </div>
+
+                {/* Volume control */}
+                <div className="mt-4 pt-4 border-t border-border/30">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">Audio</span>
+                    <motion.button
+                      onClick={() => setIsMuted(!isMuted)}
+                      className={`p-2 rounded-lg ${isMuted ? 'bg-red-500/20 text-red-400' : 'bg-cosmic-card text-foreground'} border border-border/50`}
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.9 }}
+                    >
+                      {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                    </motion.button>
+                  </div>
+                </div>
+
+                {/* Proceed to quiz button */}
+                <NeonButton 
+                  onClick={() => {
+                    if (isConnected) stopConversation();
+                    setPhase("post");
+                  }} 
+                  className="w-full mt-4"
+                  variant="secondary"
+                  size="sm"
+                >
+                  Complete Session →
+                </NeonButton>
               </GlowCard>
             </div>
           </div>
@@ -351,18 +606,18 @@ const Session = () => {
             <GlowCard>
               <div className="text-center mb-6">
                 <div className="text-5xl mb-4">🎉</div>
-                <h2 className="text-2xl font-poppins font-bold text-white mb-2">Session Complete!</h2>
-                <p className="text-gray-400">How was your learning experience?</p>
+                <h2 className="text-2xl font-poppins font-bold text-foreground mb-2">Session Complete!</h2>
+                <p className="text-muted-foreground">How was your learning experience with Priya AI?</p>
               </div>
 
               <div className="space-y-4 mb-6">
                 <div>
-                  <p className="text-gray-300 mb-2">How confident do you feel now?</p>
+                  <p className="text-foreground mb-2">How confident do you feel now?</p>
                   <div className="flex gap-2">
                     {["😟", "😐", "🙂", "😊", "🤩"].map((emoji, idx) => (
                       <motion.button
                         key={idx}
-                        className="flex-1 py-3 text-2xl rounded-xl bg-slate-800 hover:bg-slate-700 border border-gray-700"
+                        className="flex-1 py-3 text-2xl rounded-xl bg-cosmic-card hover:bg-cosmic-card/80 border border-border/50"
                         whileHover={{ scale: 1.1 }}
                         whileTap={{ scale: 0.95 }}
                       >
@@ -393,23 +648,23 @@ const Session = () => {
             <GlowCard>
               <div className="flex justify-between items-center mb-6">
                 <span className="text-sm text-cyan-400">Question {currentQuizQuestion + 1} of {quizQuestions.length}</span>
-                <span className="text-sm text-gray-400">
+                <span className="text-sm text-muted-foreground">
                   {quizAnswers.filter((a, i) => a === quizQuestions[i].correct).length} correct so far
                 </span>
               </div>
 
-              <h3 className="text-xl font-medium text-white mb-6">{currentQ.question}</h3>
+              <h3 className="text-xl font-medium text-foreground mb-6">{currentQ.question}</h3>
 
               <div className="space-y-3">
                 {currentQ.options.map((option, idx) => (
                   <motion.button
                     key={idx}
                     onClick={() => handleQuizAnswer(idx)}
-                    className="w-full text-left px-4 py-4 rounded-xl bg-slate-800/80 border-2 border-gray-700 text-gray-200 hover:border-cyan-400/50 hover:bg-cyan-400/5 transition-all"
+                    className="w-full text-left px-4 py-4 rounded-xl bg-cosmic-card border-2 border-border text-foreground hover:border-cyan-400/50 hover:bg-cyan-400/5 transition-all"
                     whileHover={{ scale: 1.01, x: 5 }}
                     whileTap={{ scale: 0.99 }}
                   >
-                    <span className="inline-block w-8 h-8 rounded-full bg-slate-700 text-center leading-8 mr-3 text-sm">
+                    <span className="inline-block w-8 h-8 rounded-full bg-cosmic-dark text-center leading-8 mr-3 text-sm">
                       {String.fromCharCode(65 + idx)}
                     </span>
                     {option}
@@ -418,7 +673,7 @@ const Session = () => {
               </div>
 
               {/* Progress bar */}
-              <div className="mt-6 h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div className="mt-6 h-2 bg-cosmic-card rounded-full overflow-hidden">
                 <motion.div
                   className="h-full bg-gradient-to-r from-cyan-400 to-teal-400"
                   initial={{ width: 0 }}
@@ -442,39 +697,58 @@ const Session = () => {
               <motion.div
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
-                transition={{ type: "spring", delay: 0.2 }}
-                className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-cyan-400/20 to-purple-500/20 border-2 border-cyan-400/40 flex items-center justify-center"
+                transition={{ type: "spring", bounce: 0.5 }}
+                className="mb-6"
               >
-                <Award className="w-12 h-12 text-cyan-400" />
+                {percentage >= 70 ? (
+                  <div className="text-6xl">🏆</div>
+                ) : percentage >= 50 ? (
+                  <div className="text-6xl">⭐</div>
+                ) : (
+                  <div className="text-6xl">📚</div>
+                )}
               </motion.div>
 
-              <h2 className="text-3xl font-poppins font-bold text-white mb-2">Session Complete! 🎉</h2>
-              <p className="text-gray-400 mb-6">You've mastered today's topic</p>
+              <h2 className="text-2xl font-poppins font-bold text-foreground mb-2">
+                {percentage >= 70 ? "Excellent Work!" : percentage >= 50 ? "Good Effort!" : "Keep Practicing!"}
+              </h2>
 
-              <div className="grid grid-cols-3 gap-4 mb-8">
-                <div className="p-4 rounded-xl bg-slate-800/50 border border-gray-700">
-                  <p className="text-3xl font-bold text-cyan-400">{score}/{quizQuestions.length}</p>
-                  <p className="text-sm text-gray-400">Correct</p>
+              <div className="my-8">
+                <div className="text-5xl font-bold text-cyan-400 mb-2">{score}/{quizQuestions.length}</div>
+                <p className="text-muted-foreground">Questions Correct</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 mb-8">
+                <div className="bg-cosmic-card rounded-xl p-4 border border-border/50">
+                  <div className="text-2xl font-bold text-green-400">{score}</div>
+                  <p className="text-sm text-muted-foreground">Correct</p>
                 </div>
-                <div className="p-4 rounded-xl bg-slate-800/50 border border-gray-700">
-                  <p className="text-3xl font-bold text-purple-400">{percentage.toFixed(0)}%</p>
-                  <p className="text-sm text-gray-400">Accuracy</p>
-                </div>
-                <div className="p-4 rounded-xl bg-slate-800/50 border border-gray-700">
-                  <p className="text-3xl font-bold text-pink-400">+250</p>
-                  <p className="text-sm text-gray-400">XP Earned</p>
+                <div className="bg-cosmic-card rounded-xl p-4 border border-border/50">
+                  <div className="text-2xl font-bold text-red-400">{quizQuestions.length - score}</div>
+                  <p className="text-sm text-muted-foreground">Incorrect</p>
                 </div>
               </div>
 
-              <div className="flex gap-4">
-                <NeonButton variant="outline" onClick={() => navigate("/dashboard")} className="flex-1">
-                  <ArrowLeft className="w-4 h-4 mr-2" />
+              <div className="flex gap-3">
+                <NeonButton onClick={() => navigate("/dashboard")} className="flex-1">
                   Back to Dashboard
                 </NeonButton>
-                <NeonButton onClick={() => window.location.reload()} className="flex-1">
-                  <RotateCcw className="w-4 h-4 mr-2" />
-                  New Session
-                </NeonButton>
+                <motion.button
+                  onClick={() => {
+                    setPhase("pre");
+                    setPreAnswers([]);
+                    setQuizAnswers([]);
+                    setCurrentQuizQuestion(0);
+                    setTimeLeft(40 * 60);
+                    setConfidenceLevel(null);
+                    setChatHistory([]);
+                  }}
+                  className="px-4 py-3 rounded-xl border border-border text-foreground hover:bg-cosmic-card transition-all"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  <RotateCcw className="w-5 h-5" />
+                </motion.button>
               </div>
             </GlowCard>
           </motion.div>
@@ -483,88 +757,101 @@ const Session = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen bg-cosmic-dark text-foreground relative overflow-hidden">
       <CosmicBackground />
 
-      {/* Confetti */}
-      {showConfetti && (
-        <div className="fixed inset-0 pointer-events-none z-50">
-          {[...Array(50)].map((_, i) => (
-            <motion.div
-              key={i}
-              className="absolute w-3 h-3"
-              style={{
-                left: `${Math.random() * 100}%`,
-                top: -20,
-                backgroundColor: ["#00f2ea", "#a855f7", "#ec4899", "#22d3ee"][Math.floor(Math.random() * 4)],
-                borderRadius: Math.random() > 0.5 ? "50%" : "0",
-              }}
-              animate={{
-                y: window.innerHeight + 100,
-                rotate: Math.random() * 720,
-                x: (Math.random() - 0.5) * 200,
-              }}
-              transition={{
-                duration: 2 + Math.random() * 2,
-                ease: "easeIn",
-                delay: Math.random() * 0.5,
-              }}
-            />
-          ))}
-        </div>
-      )}
+      {/* Confetti Effect */}
+      <AnimatePresence>
+        {showConfetti && (
+          <div className="fixed inset-0 pointer-events-none z-50">
+            {[...Array(50)].map((_, i) => (
+              <motion.div
+                key={i}
+                className="absolute w-3 h-3 rounded-full"
+                style={{
+                  background: ["#00f2ea", "#22d3ee", "#a855f7", "#f97316", "#22c55e"][i % 5],
+                  left: `${Math.random() * 100}%`,
+                }}
+                initial={{ top: -20, opacity: 1 }}
+                animate={{ top: "100vh", opacity: 0, rotate: Math.random() * 720 }}
+                transition={{ duration: 2 + Math.random() * 2, delay: Math.random() * 0.5 }}
+              />
+            ))}
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Header */}
-      <header className="relative z-20 border-b border-cyan-400/10 bg-slate-900/50 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <motion.button
-            onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
-            whileHover={{ x: -5 }}
-          >
-            <ArrowLeft className="w-5 h-5" />
-            <span>Exit Session</span>
-          </motion.button>
+      <header className="relative z-10 p-4 flex items-center justify-between">
+        <motion.button
+          onClick={() => navigate("/dashboard")}
+          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
+          whileHover={{ x: -5 }}
+        >
+          <ArrowLeft className="w-5 h-5" />
+          <span>Exit Session</span>
+        </motion.button>
 
-          {/* Timer */}
-          {phase === "teaching" && (
-            <div className="flex items-center gap-4">
-              <motion.div
-                className="flex items-center gap-3 px-4 py-2 rounded-full bg-slate-800 border border-cyan-400/30"
-                animate={!isPaused ? { boxShadow: ["0 0 20px rgba(0,242,234,0.3)", "0 0 30px rgba(0,242,234,0.5)", "0 0 20px rgba(0,242,234,0.3)"] } : {}}
-                transition={{ duration: 1, repeat: Infinity }}
-              >
-                <span className="text-2xl font-mono font-bold text-cyan-400">{formatTime(timeLeft)}</span>
-                <button
-                  onClick={() => setIsPaused(!isPaused)}
-                  className="p-2 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
-                >
-                  {isPaused ? <Play className="w-4 h-4 text-cyan-400" /> : <Pause className="w-4 h-4 text-cyan-400" />}
-                </button>
-              </motion.div>
-
-              <button
-                onClick={() => setPhase("post")}
-                className="px-4 py-2 rounded-lg bg-purple-500/20 text-purple-400 border border-purple-400/30 text-sm font-medium hover:bg-purple-500/30 transition-colors"
-              >
-                End Session
-              </button>
-            </div>
-          )}
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setIsMuted(!isMuted)}
-              className="p-2 rounded-lg bg-slate-800 text-gray-400 hover:text-white transition-colors"
+        {/* Timer */}
+        {phase === "teaching" && (
+          <div className="flex items-center gap-4">
+            <motion.div
+              className="flex items-center gap-3 bg-cosmic-card/80 backdrop-blur-sm px-4 py-2 rounded-full border border-cyan-400/30"
+              animate={{
+                borderColor: timeLeft < 300 ? ["rgba(239,68,68,0.5)", "rgba(239,68,68,0.8)", "rgba(239,68,68,0.5)"] : "rgba(0,242,234,0.3)",
+              }}
+              transition={{ duration: 1, repeat: timeLeft < 300 ? Infinity : 0 }}
             >
-              {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-            </button>
+              <div className="relative w-10 h-10">
+                <svg className="w-10 h-10 -rotate-90">
+                  <circle
+                    cx="20"
+                    cy="20"
+                    r="16"
+                    fill="none"
+                    stroke="rgba(255,255,255,0.1)"
+                    strokeWidth="3"
+                  />
+                  <motion.circle
+                    cx="20"
+                    cy="20"
+                    r="16"
+                    fill="none"
+                    stroke="url(#timerGradient)"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeDasharray={100}
+                    strokeDashoffset={100 - (timeLeft / (40 * 60)) * 100}
+                  />
+                  <defs>
+                    <linearGradient id="timerGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#00f2ea" />
+                      <stop offset="100%" stopColor="#06b6d4" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+              </div>
+              <span className={`font-mono text-lg ${timeLeft < 300 ? "text-red-400" : "text-cyan-400"}`}>
+                {formatTime(timeLeft)}
+              </span>
+            </motion.div>
+
+            <motion.button
+              onClick={() => setIsPaused(!isPaused)}
+              className="p-2 rounded-full bg-cosmic-card border border-border/50 text-foreground"
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+            >
+              {isPaused ? <Play className="w-5 h-5" /> : <Pause className="w-5 h-5" />}
+            </motion.button>
           </div>
-        </div>
+        )}
+
+        <div className="w-24" /> {/* Spacer */}
       </header>
 
       {/* Main Content */}
-      <main className="relative z-10 flex-1 max-w-7xl mx-auto w-full px-4 py-8">
+      <main className="relative z-10 container mx-auto px-4 py-4 h-[calc(100vh-80px)]">
         <AnimatePresence mode="wait">
           {renderPhaseContent()}
         </AnimatePresence>
