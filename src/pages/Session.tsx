@@ -1,17 +1,18 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { useConversation } from "@elevenlabs/react";
 import { 
   ArrowLeft, Pause, Play, Send, Mic, MicOff, Volume2, VolumeX, 
   CheckCircle, XCircle, Award, RotateCcw, Phone, PhoneOff,
-  RefreshCw, Languages, Gauge, HelpCircle
+  RefreshCw, Languages, Gauge, HelpCircle, MessageSquare, Sparkles
 } from "lucide-react";
 import CosmicBackground from "@/components/ui/CosmicBackground";
 import GlowCard from "@/components/ui/GlowCard";
 import NeonButton from "@/components/ui/NeonButton";
 import VideoAvatar from "@/components/VideoAvatar";
 import { useToast } from "@/hooks/use-toast";
+import { usePriyaAI } from "@/hooks/usePriyaAI";
 
 const AGENT_ID = "agent_8001kdx2vrjdf4tamc70zbtjmd4e";
 
@@ -39,6 +40,15 @@ const Session = () => {
   const [showConfetti, setShowConfetti] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [confidenceLevel, setConfidenceLevel] = useState<number | null>(null);
+  const [useTextMode, setUseTextMode] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Priya AI text chat hook (Lovable AI)
+  const priyaAI = usePriyaAI({
+    studentName: "Student",
+    topic: "Quadratic Equations",
+    confidenceLevel: confidenceLevel || undefined,
+  });
 
   // ElevenLabs conversation hook
   const conversation = useConversation({
@@ -209,17 +219,23 @@ const Session = () => {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!message.trim()) return;
 
-    setChatHistory((prev) => [...prev, { role: "user", content: message }]);
-    
-    // Send to ElevenLabs if connected
-    if (isConnected) {
-      conversation.sendUserMessage(message);
-    }
-
+    const userMessage = message.trim();
     setMessage("");
+
+    if (useTextMode) {
+      // Use Lovable AI text chat
+      await priyaAI.sendMessage(userMessage);
+    } else if (isConnected) {
+      // Use ElevenLabs voice
+      setChatHistory((prev) => [...prev, { role: "user", content: userMessage }]);
+      conversation.sendUserMessage(userMessage);
+    } else {
+      // Fallback to text mode if not connected
+      await priyaAI.sendMessage(userMessage);
+    }
   };
 
   const handlePreAnswerSubmit = (answer: string) => {
@@ -229,13 +245,21 @@ const Session = () => {
         setPhase("teaching");
         toast({
           title: "Session Starting! 🚀",
-          description: "Connecting you with Priya AI...",
+          description: "Choose voice or text mode to learn with Priya AI",
         });
-        // Auto-start conversation when entering teaching phase
-        startConversation();
+        // Start with text mode by default, user can switch to voice
+        setUseTextMode(true);
+        priyaAI.startSession();
       }, 1000);
     }
   };
+
+  // Auto-scroll chat
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [priyaAI.messages, chatHistory]);
 
   const handleQuizAnswer = (answerIndex: number) => {
     setQuizAnswers([...quizAnswers, answerIndex]);
@@ -258,12 +282,25 @@ const Session = () => {
   };
 
   // Quick action buttons for the session
+  const handleQuickAction = (prompt: string) => {
+    if (useTextMode) {
+      priyaAI.sendMessage(prompt);
+    } else if (isConnected) {
+      conversation.sendUserMessage(prompt);
+    }
+  };
+
   const quickActions = [
-    { icon: RefreshCw, label: "Explain again", action: () => conversation.sendUserMessage("Can you explain that again?") },
-    { icon: HelpCircle, label: "Give example", action: () => conversation.sendUserMessage("Can you give me a real-life example?") },
-    { icon: Gauge, label: "Slow down", action: () => conversation.sendUserMessage("Please slow down a bit.") },
-    { icon: Languages, label: "Switch to Hindi", action: () => conversation.sendUserMessage("Please explain in Hindi.") },
+    { icon: RefreshCw, label: "Explain again", action: () => handleQuickAction("Can you explain that again more clearly?") },
+    { icon: HelpCircle, label: "Give example", action: () => handleQuickAction("Can you give me a real-life Indian example?") },
+    { icon: Gauge, label: "Slow down", action: () => handleQuickAction("Please slow down a bit and explain step by step.") },
+    { icon: Languages, label: "Switch to Hindi", action: () => handleQuickAction("Please explain in Hindi now.") },
   ];
+
+  // Combined messages for display
+  const displayMessages = useTextMode 
+    ? priyaAI.messages.map(m => ({ role: m.role === "assistant" ? "ai" as const : "user" as const, content: m.content }))
+    : chatHistory;
 
   const renderPhaseContent = () => {
     switch (phase) {
@@ -359,59 +396,96 @@ const Session = () => {
             {/* Left Panel - AI Tutor Video Avatar */}
             <div className="lg:col-span-3">
               <GlowCard className="h-full flex flex-col p-4">
-                <VideoAvatar isSpeaking={isSpeaking} className="w-full aspect-[3/4] mb-4" />
+                <VideoAvatar isSpeaking={isSpeaking || priyaAI.isStreaming} className="w-full aspect-[3/4] mb-4" />
                 
-                {/* Connection status */}
+                {/* Mode Toggle */}
+                <div className="flex items-center justify-center gap-2 mb-3 p-1 bg-cosmic-card rounded-xl border border-border/50">
+                  <motion.button
+                    onClick={() => {
+                      setUseTextMode(true);
+                      if (isConnected) stopConversation();
+                    }}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+                      useTextMode ? 'bg-cyan-400/20 text-cyan-400 border border-cyan-400/50' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                    whileTap={{ scale: 0.95 }}
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    Text
+                  </motion.button>
+                  <motion.button
+                    onClick={() => {
+                      setUseTextMode(false);
+                      if (!isConnected) startConversation();
+                    }}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+                      !useTextMode ? 'bg-purple-400/20 text-purple-400 border border-purple-400/50' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                    whileTap={{ scale: 0.95 }}
+                  >
+                    <Mic className="w-3.5 h-3.5" />
+                    Voice
+                  </motion.button>
+                </div>
+
+                {/* Connection/Mode status */}
                 <div className="flex items-center justify-center gap-2 mb-3">
                   <motion.div 
-                    className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-gray-500'}`}
-                    animate={isConnected ? { scale: [1, 1.2, 1] } : {}}
+                    className={`w-2 h-2 rounded-full ${useTextMode ? (priyaAI.isStreaming ? 'bg-cyan-400' : 'bg-green-400') : (isConnected ? 'bg-green-400' : 'bg-gray-500')}`}
+                    animate={(useTextMode && priyaAI.isStreaming) || (!useTextMode && isConnected) ? { scale: [1, 1.2, 1] } : {}}
                     transition={{ duration: 1, repeat: Infinity }}
                   />
                   <span className="text-xs text-muted-foreground">
-                    {isConnected ? "Live with Priya AI" : "Disconnected"}
+                    {useTextMode 
+                      ? (priyaAI.isStreaming ? "Priya is typing..." : "Text Chat Active")
+                      : (isConnected ? "Live Voice with Priya" : "Voice Disconnected")
+                    }
                   </span>
                 </div>
 
-                {/* Voice control button */}
-                {!isConnected ? (
-                  <NeonButton 
-                    onClick={startConversation} 
-                    disabled={isConnecting}
-                    className="w-full"
-                    size="sm"
-                  >
-                    {isConnecting ? (
-                      <>
-                        <motion.div 
-                          className="w-4 h-4 border-2 border-foreground/30 border-t-foreground rounded-full mr-2"
-                          animate={{ rotate: 360 }}
-                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                        />
-                        Connecting...
-                      </>
+                {/* Voice control - only show in voice mode */}
+                {!useTextMode && (
+                  <>
+                    {!isConnected ? (
+                      <NeonButton 
+                        onClick={startConversation} 
+                        disabled={isConnecting}
+                        className="w-full"
+                        size="sm"
+                      >
+                        {isConnecting ? (
+                          <>
+                            <motion.div 
+                              className="w-4 h-4 border-2 border-foreground/30 border-t-foreground rounded-full mr-2"
+                              animate={{ rotate: 360 }}
+                              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                            />
+                            Connecting...
+                          </>
+                        ) : (
+                          <>
+                            <Phone className="w-4 h-4 mr-2" />
+                            Start Voice
+                          </>
+                        )}
+                      </NeonButton>
                     ) : (
-                      <>
-                        <Phone className="w-4 h-4 mr-2" />
-                        Connect to Priya
-                      </>
+                      <motion.button
+                        onClick={stopConversation}
+                        className="w-full py-2 px-4 rounded-xl border border-red-500/50 text-red-400 hover:bg-red-500/10 transition-all text-sm flex items-center justify-center gap-2"
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                      >
+                        <PhoneOff className="w-4 h-4" />
+                        End Voice
+                      </motion.button>
                     )}
-                  </NeonButton>
-                ) : (
-                  <motion.button
-                    onClick={stopConversation}
-                    className="w-full py-2 px-4 rounded-xl border border-red-500/50 text-red-400 hover:bg-red-500/10 transition-all text-sm flex items-center justify-center gap-2"
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                  >
-                    <PhoneOff className="w-4 h-4" />
-                    End Session
-                  </motion.button>
+                  </>
                 )}
 
-                {/* Speaking indicator */}
+                {/* Speaking/Streaming indicator */}
                 <AnimatePresence>
-                  {isSpeaking && (
+                  {(isSpeaking || priyaAI.isStreaming) && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -428,10 +502,18 @@ const Session = () => {
                           />
                         ))}
                       </div>
-                      <span className="text-xs text-cyan-400">Priya is speaking...</span>
+                      <span className="text-xs text-cyan-400">
+                        {useTextMode ? "Priya is typing..." : "Priya is speaking..."}
+                      </span>
                     </motion.div>
                   )}
                 </AnimatePresence>
+
+                {/* AI Mode Badge */}
+                <div className="mt-auto pt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+                  <Sparkles className="w-3 h-3 text-cyan-400" />
+                  <span>Powered by Lovable AI</span>
+                </div>
               </GlowCard>
             </div>
 
@@ -494,30 +576,40 @@ const Session = () => {
                 <div className="h-full flex flex-col">
                   {/* Chat History */}
                   <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
-                    {chatHistory.length === 0 ? (
+                    {displayMessages.length === 0 ? (
                       <div className="text-center text-muted-foreground py-8">
-                        <Mic className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                        <p>Speak or type to interact with Priya AI</p>
+                        <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        <p>{useTextMode ? "Type your question to start learning!" : "Speak or type to interact with Priya AI"}</p>
                       </div>
                     ) : (
-                      chatHistory.map((msg, idx) => (
-                        <motion.div
-                          key={idx}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                        >
-                          <div
-                            className={`max-w-[85%] px-4 py-2 rounded-2xl text-sm ${
-                              msg.role === "user"
-                                ? "bg-cyan-400/20 text-cyan-100 border border-cyan-400/30"
-                                : "bg-purple-400/20 text-purple-100 border border-purple-400/30"
-                            }`}
+                      <>
+                        {displayMessages.map((msg, idx) => (
+                          <motion.div
+                            key={idx}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                           >
-                            {msg.content}
-                          </div>
-                        </motion.div>
-                      ))
+                            <div
+                              className={`max-w-[85%] px-4 py-2 rounded-2xl text-sm whitespace-pre-wrap ${
+                                msg.role === "user"
+                                  ? "bg-cyan-400/20 text-cyan-100 border border-cyan-400/30"
+                                  : "bg-purple-400/20 text-purple-100 border border-purple-400/30"
+                              }`}
+                            >
+                              {msg.content || (
+                                <motion.span
+                                  animate={{ opacity: [0.5, 1, 0.5] }}
+                                  transition={{ duration: 1, repeat: Infinity }}
+                                >
+                                  Priya is thinking...
+                                </motion.span>
+                              )}
+                            </div>
+                          </motion.div>
+                        ))}
+                        <div ref={chatEndRef} />
+                      </>
                     )}
                   </div>
 
@@ -527,13 +619,25 @@ const Session = () => {
                       type="text"
                       value={message}
                       onChange={(e) => setMessage(e.target.value)}
-                      onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-                      placeholder={isConnected ? "Type or speak your question..." : "Connect to Priya to chat..."}
+                      onKeyPress={(e) => e.key === "Enter" && !priyaAI.isLoading && handleSendMessage()}
+                      placeholder={useTextMode ? "Ask Priya anything..." : (isConnected ? "Type or speak your question..." : "Switch to text mode or connect voice...")}
                       className="flex-1 px-4 py-2.5 rounded-xl bg-cosmic-card border border-border text-foreground placeholder-muted-foreground focus:border-cyan-400/60 focus:outline-none text-sm"
-                      disabled={!isConnected}
+                      disabled={priyaAI.isLoading}
                     />
-                    <NeonButton onClick={handleSendMessage} disabled={!isConnected} size="sm">
-                      <Send className="w-4 h-4" />
+                    <NeonButton 
+                      onClick={handleSendMessage} 
+                      disabled={priyaAI.isLoading || !message.trim()} 
+                      size="sm"
+                    >
+                      {priyaAI.isLoading ? (
+                        <motion.div 
+                          className="w-4 h-4 border-2 border-foreground/30 border-t-foreground rounded-full"
+                          animate={{ rotate: 360 }}
+                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        />
+                      ) : (
+                        <Send className="w-4 h-4" />
+                      )}
                     </NeonButton>
                   </div>
                 </div>
@@ -553,7 +657,7 @@ const Session = () => {
                     <motion.button
                       key={idx}
                       onClick={action.action}
-                      disabled={!isConnected}
+                      disabled={priyaAI.isLoading}
                       className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-cosmic-card border border-border/50 text-foreground hover:border-cyan-400/50 hover:bg-cyan-400/5 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                       whileHover={{ scale: 1.02, x: 5 }}
                       whileTap={{ scale: 0.98 }}
