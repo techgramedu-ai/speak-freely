@@ -10,7 +10,7 @@ interface UsePriyaAIOptions {
   studentName?: string;
   topic?: string;
   confidenceLevel?: number;
-  onMessageUpdate?: (content: string) => void;
+  onMessageComplete?: (content: string) => void;
 }
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/priya-ai-chat`;
@@ -118,7 +118,6 @@ export const usePriyaAI = (options: UsePriyaAIOptions = {}) => {
                       : m
                   )
                 );
-                options.onMessageUpdate?.(assistantContent);
               }
             } catch {
               // Incomplete JSON, put it back
@@ -154,6 +153,11 @@ export const usePriyaAI = (options: UsePriyaAIOptions = {}) => {
               /* ignore */
             }
           }
+        }
+
+        // Call onMessageComplete when the full message is received
+        if (assistantContent) {
+          options.onMessageComplete?.(assistantContent);
         }
       } catch (error) {
         if ((error as Error).name === "AbortError") {

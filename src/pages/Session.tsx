@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { useConversation } from "@elevenlabs/react";
 import { 
-  ArrowLeft, Pause, Play, Send, Mic, MicOff, Volume2, VolumeX, 
-  CheckCircle, XCircle, Award, RotateCcw, Phone, PhoneOff,
-  RefreshCw, Languages, Gauge, HelpCircle, MessageSquare, Sparkles
+  ArrowLeft, Pause, Play, Send, Volume2, VolumeX, 
+  CheckCircle, XCircle, Award, RotateCcw,
+  RefreshCw, Languages, Gauge, HelpCircle, Sparkles, MessageSquare
 } from "lucide-react";
 import CosmicBackground from "@/components/ui/CosmicBackground";
 import GlowCard from "@/components/ui/GlowCard";
@@ -13,8 +12,7 @@ import NeonButton from "@/components/ui/NeonButton";
 import VideoAvatar from "@/components/VideoAvatar";
 import { useToast } from "@/hooks/use-toast";
 import { usePriyaAI } from "@/hooks/usePriyaAI";
-
-const AGENT_ID = "agent_8001kdx2vrjdf4tamc70zbtjmd4e";
+import { useTTS } from "@/hooks/useTTS";
 
 type SessionPhase = "pre" | "teaching" | "post" | "quiz" | "complete";
 
@@ -29,71 +27,35 @@ const Session = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [phase, setPhase] = useState<SessionPhase>("pre");
-  const [timeLeft, setTimeLeft] = useState(40 * 60); // 40 minutes
+  const [timeLeft, setTimeLeft] = useState(40 * 60);
   const [isPaused, setIsPaused] = useState(true);
   const [message, setMessage] = useState("");
   const [isMuted, setIsMuted] = useState(false);
-  const [chatHistory, setChatHistory] = useState<Array<{ role: "user" | "ai"; content: string }>>([]);
   const [preAnswers, setPreAnswers] = useState<string[]>([]);
   const [currentQuizQuestion, setCurrentQuizQuestion] = useState(0);
   const [quizAnswers, setQuizAnswers] = useState<number[]>([]);
   const [showConfetti, setShowConfetti] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
   const [confidenceLevel, setConfidenceLevel] = useState<number | null>(null);
-  const [useTextMode, setUseTextMode] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Priya AI text chat hook (Lovable AI)
+  // TTS hook for voice output
+  const tts = useTTS({
+    voiceId: "EXAVITQu4vr4xnSDxMaL",
+  });
+
+  // Priya AI text chat hook (Lovable AI) with TTS on message complete
   const priyaAI = usePriyaAI({
     studentName: "Student",
     topic: "Quadratic Equations",
     confidenceLevel: confidenceLevel || undefined,
-  });
-
-  // ElevenLabs conversation hook
-  const conversation = useConversation({
-    onConnect: () => {
-      console.log("Connected to Priya AI");
-      toast({
-        title: "Connected to Priya AI 🎓",
-        description: "Your AI tutor is ready. Start speaking!",
-      });
-      setIsPaused(false);
-    },
-    onDisconnect: () => {
-      console.log("Disconnected from Priya AI");
-      setIsPaused(true);
-    },
-    onMessage: (message: unknown) => {
-      console.log("Message from Priya:", message);
-      const msg = message as Record<string, unknown>;
-      if (msg.type === "agent_response") {
-        const event = msg.agent_response_event as Record<string, string> | undefined;
-        setChatHistory((prev) => [
-          ...prev,
-          { role: "ai", content: event?.agent_response || "" },
-        ]);
-      } else if (msg.type === "user_transcript") {
-        const event = msg.user_transcription_event as Record<string, string> | undefined;
-        setChatHistory((prev) => [
-          ...prev,
-          { role: "user", content: event?.user_transcript || "" },
-        ]);
+    onMessageComplete: (content) => {
+      if (!isMuted && content) {
+        tts.speak(content);
       }
     },
-    onError: (error) => {
-      console.error("Conversation error:", error);
-      toast({
-        variant: "destructive",
-        title: "Connection Error",
-        description: "Failed to connect to Priya AI. Please try again.",
-      });
-      setIsConnecting(false);
-    },
   });
 
-  const isConnected = conversation.status === "connected";
-  const isSpeaking = conversation.isSpeaking;
+  const isSpeaking = tts.isSpeaking;
 
   const preSessionQuestions = [
     "What do you already know about Quadratic Equations?",
@@ -164,36 +126,6 @@ const Session = () => {
     },
   ];
 
-  // Start conversation with Priya AI
-  const startConversation = useCallback(async () => {
-    setIsConnecting(true);
-    try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      await conversation.startSession({
-        agentId: AGENT_ID,
-        connectionType: "webrtc",
-      });
-    } catch (error) {
-      console.error("Failed to start conversation:", error);
-      toast({
-        variant: "destructive",
-        title: "Microphone Access Required",
-        description: "Please enable microphone access to talk with Priya AI.",
-      });
-    } finally {
-      setIsConnecting(false);
-    }
-  }, [conversation, toast]);
-
-  const stopConversation = useCallback(async () => {
-    await conversation.endSession();
-    toast({
-      title: "Session Paused",
-      description: "Priya AI has been disconnected.",
-    });
-  }, [conversation, toast]);
-
   useEffect(() => {
     if (!isPaused && phase === "teaching" && timeLeft > 0) {
       const timer = setInterval(() => {
@@ -203,15 +135,12 @@ const Session = () => {
     }
   }, [isPaused, phase, timeLeft]);
 
-  // Auto-transition to post phase when time runs out
   useEffect(() => {
     if (timeLeft === 0 && phase === "teaching") {
       setPhase("post");
-      if (isConnected) {
-        stopConversation();
-      }
+      tts.stop();
     }
-  }, [timeLeft, phase, isConnected, stopConversation]);
+  }, [timeLeft, phase, tts]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -221,21 +150,9 @@ const Session = () => {
 
   const handleSendMessage = async () => {
     if (!message.trim()) return;
-
     const userMessage = message.trim();
     setMessage("");
-
-    if (useTextMode) {
-      // Use Lovable AI text chat
-      await priyaAI.sendMessage(userMessage);
-    } else if (isConnected) {
-      // Use ElevenLabs voice
-      setChatHistory((prev) => [...prev, { role: "user", content: userMessage }]);
-      conversation.sendUserMessage(userMessage);
-    } else {
-      // Fallback to text mode if not connected
-      await priyaAI.sendMessage(userMessage);
-    }
+    await priyaAI.sendMessage(userMessage);
   };
 
   const handlePreAnswerSubmit = (answer: string) => {
@@ -243,27 +160,24 @@ const Session = () => {
     if (preAnswers.length >= preSessionQuestions.length - 1) {
       setTimeout(() => {
         setPhase("teaching");
+        setIsPaused(false);
         toast({
           title: "Session Starting! 🚀",
-          description: "Choose voice or text mode to learn with Priya AI",
+          description: "Start learning with Priya AI",
         });
-        // Start with text mode by default, user can switch to voice
-        setUseTextMode(true);
         priyaAI.startSession();
       }, 1000);
     }
   };
 
-  // Auto-scroll chat
   useEffect(() => {
     if (chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [priyaAI.messages, chatHistory]);
+  }, [priyaAI.messages]);
 
   const handleQuizAnswer = (answerIndex: number) => {
     setQuizAnswers([...quizAnswers, answerIndex]);
-    
     if (currentQuizQuestion < quizQuestions.length - 1) {
       setCurrentQuizQuestion(currentQuizQuestion + 1);
     } else {
@@ -281,13 +195,8 @@ const Session = () => {
     return correct;
   };
 
-  // Quick action buttons for the session
   const handleQuickAction = (prompt: string) => {
-    if (useTextMode) {
-      priyaAI.sendMessage(prompt);
-    } else if (isConnected) {
-      conversation.sendUserMessage(prompt);
-    }
+    priyaAI.sendMessage(prompt);
   };
 
   const quickActions = [
@@ -297,10 +206,10 @@ const Session = () => {
     { icon: Languages, label: "Switch to Hindi", action: () => handleQuickAction("Please explain in Hindi now.") },
   ];
 
-  // Combined messages for display
-  const displayMessages = useTextMode 
-    ? priyaAI.messages.map(m => ({ role: m.role === "assistant" ? "ai" as const : "user" as const, content: m.content }))
-    : chatHistory;
+  const displayMessages = priyaAI.messages.map(m => ({ 
+    role: m.role === "assistant" ? "ai" as const : "user" as const, 
+    content: m.content 
+  }));
 
   const renderPhaseContent = () => {
     switch (phase) {
@@ -317,13 +226,8 @@ const Session = () => {
                 <p className="text-muted-foreground">Priya AI wants to understand your current knowledge</p>
               </div>
 
-              {/* Confidence Scale */}
               {confidenceLevel === null && (
-                <motion.div 
-                  className="mb-8"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                >
+                <motion.div className="mb-8" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                   <p className="text-foreground mb-3">How confident do you feel about this topic? (1-5)</p>
                   <div className="flex gap-2 justify-center">
                     {[1, 2, 3, 4, 5].map((level) => (
@@ -398,90 +302,17 @@ const Session = () => {
               <GlowCard className="h-full flex flex-col p-4">
                 <VideoAvatar isSpeaking={isSpeaking || priyaAI.isStreaming} className="w-full aspect-[3/4] mb-4" />
                 
-                {/* Mode Toggle */}
-                <div className="flex items-center justify-center gap-2 mb-3 p-1 bg-cosmic-card rounded-xl border border-border/50">
-                  <motion.button
-                    onClick={() => {
-                      setUseTextMode(true);
-                      if (isConnected) stopConversation();
-                    }}
-                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-                      useTextMode ? 'bg-cyan-400/20 text-cyan-400 border border-cyan-400/50' : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                    whileTap={{ scale: 0.95 }}
-                  >
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    Text
-                  </motion.button>
-                  <motion.button
-                    onClick={() => {
-                      setUseTextMode(false);
-                      if (!isConnected) startConversation();
-                    }}
-                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-                      !useTextMode ? 'bg-purple-400/20 text-purple-400 border border-purple-400/50' : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                    whileTap={{ scale: 0.95 }}
-                  >
-                    <Mic className="w-3.5 h-3.5" />
-                    Voice
-                  </motion.button>
-                </div>
-
-                {/* Connection/Mode status */}
+                {/* Status indicator */}
                 <div className="flex items-center justify-center gap-2 mb-3">
                   <motion.div 
-                    className={`w-2 h-2 rounded-full ${useTextMode ? (priyaAI.isStreaming ? 'bg-cyan-400' : 'bg-green-400') : (isConnected ? 'bg-green-400' : 'bg-gray-500')}`}
-                    animate={(useTextMode && priyaAI.isStreaming) || (!useTextMode && isConnected) ? { scale: [1, 1.2, 1] } : {}}
+                    className={`w-2 h-2 rounded-full ${priyaAI.isStreaming || isSpeaking ? 'bg-cyan-400' : 'bg-green-400'}`}
+                    animate={priyaAI.isStreaming || isSpeaking ? { scale: [1, 1.2, 1] } : {}}
                     transition={{ duration: 1, repeat: Infinity }}
                   />
                   <span className="text-xs text-muted-foreground">
-                    {useTextMode 
-                      ? (priyaAI.isStreaming ? "Priya is typing..." : "Text Chat Active")
-                      : (isConnected ? "Live Voice with Priya" : "Voice Disconnected")
-                    }
+                    {priyaAI.isStreaming ? "Priya is thinking..." : isSpeaking ? "Priya is speaking..." : "Ready to help"}
                   </span>
                 </div>
-
-                {/* Voice control - only show in voice mode */}
-                {!useTextMode && (
-                  <>
-                    {!isConnected ? (
-                      <NeonButton 
-                        onClick={startConversation} 
-                        disabled={isConnecting}
-                        className="w-full"
-                        size="sm"
-                      >
-                        {isConnecting ? (
-                          <>
-                            <motion.div 
-                              className="w-4 h-4 border-2 border-foreground/30 border-t-foreground rounded-full mr-2"
-                              animate={{ rotate: 360 }}
-                              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                            />
-                            Connecting...
-                          </>
-                        ) : (
-                          <>
-                            <Phone className="w-4 h-4 mr-2" />
-                            Start Voice
-                          </>
-                        )}
-                      </NeonButton>
-                    ) : (
-                      <motion.button
-                        onClick={stopConversation}
-                        className="w-full py-2 px-4 rounded-xl border border-red-500/50 text-red-400 hover:bg-red-500/10 transition-all text-sm flex items-center justify-center gap-2"
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                      >
-                        <PhoneOff className="w-4 h-4" />
-                        End Voice
-                      </motion.button>
-                    )}
-                  </>
-                )}
 
                 {/* Speaking/Streaming indicator */}
                 <AnimatePresence>
@@ -503,7 +334,7 @@ const Session = () => {
                         ))}
                       </div>
                       <span className="text-xs text-cyan-400">
-                        {useTextMode ? "Priya is typing..." : "Priya is speaking..."}
+                        {isSpeaking ? "Speaking..." : "Typing..."}
                       </span>
                     </motion.div>
                   )}
@@ -517,48 +348,38 @@ const Session = () => {
               </GlowCard>
             </div>
 
-            {/* Center Panel - Teaching Content / Slide Area */}
+            {/* Center Panel - Teaching Area + Chat */}
             <div className="lg:col-span-6 flex flex-col gap-4">
               {/* Visual Teaching Area */}
-              <GlowCard className="flex-1 min-h-[350px]">
+              <GlowCard className="flex-1 min-h-[300px]">
                 <div className="h-full flex flex-col">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-poppins font-bold text-foreground">Quadratic Equations</h3>
-                    <span className="text-xs text-cyan-400 bg-cyan-400/10 px-3 py-1 rounded-full flex items-center gap-2">
-                      <motion.div 
-                        className="w-2 h-2 rounded-full bg-cyan-400"
-                        animate={{ opacity: [1, 0.5, 1] }}
-                        transition={{ duration: 1.5, repeat: Infinity }}
-                      />
-                      Live Teaching
+                    <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                      <Award className="w-5 h-5 text-cyan-400" />
+                      Quadratic Equations
+                    </h3>
+                    <span className="text-xs text-muted-foreground bg-cosmic-card px-3 py-1 rounded-full border border-border/50">
+                      Class 10 CBSE/ICSE
                     </span>
                   </div>
-
-                  {/* Animated Diagram / Slide Area */}
-                  <div className="flex-1 rounded-xl bg-gradient-to-br from-cosmic-card/50 to-cosmic-dark/50 border border-border/50 flex items-center justify-center relative overflow-hidden">
+                  
+                  <div className="flex-1 relative rounded-xl bg-gradient-to-br from-purple-900/20 to-cyan-900/20 border border-border/30 overflow-hidden flex items-center justify-center">
                     <motion.div
-                      className="text-center px-8"
-                      animate={{ y: [0, -10, 0] }}
+                      className="text-center"
+                      animate={{ opacity: [0.7, 1, 0.7] }}
                       transition={{ duration: 3, repeat: Infinity }}
                     >
-                      <div className="text-5xl mb-6">📊</div>
-                      <motion.p 
-                        className="text-3xl font-mono text-cyan-400 mb-4"
-                        animate={{ textShadow: ["0 0 10px rgba(0,242,234,0.5)", "0 0 30px rgba(0,242,234,0.8)", "0 0 10px rgba(0,242,234,0.5)"] }}
-                        transition={{ duration: 2, repeat: Infinity }}
-                      >
-                        ax² + bx + c = 0
-                      </motion.p>
-                      <p className="text-muted-foreground">Interactive diagrams appear here during teaching</p>
+                      <div className="text-6xl mb-4">📐</div>
+                      <p className="text-lg text-foreground font-medium">ax² + bx + c = 0</p>
+                      <p className="text-sm text-muted-foreground mt-2">Standard Form of Quadratic Equation</p>
                     </motion.div>
-
-                    {/* Floating formula elements */}
+                    
                     <motion.div
                       className="absolute top-4 left-4 text-sm text-muted-foreground bg-cosmic-card/80 px-3 py-1.5 rounded-full border border-cyan-400/20"
                       animate={{ opacity: [0.5, 1, 0.5] }}
                       transition={{ duration: 2, repeat: Infinity }}
                     >
-                      Discriminant: b² - 4ac
+                      Discriminant: Δ = b² - 4ac
                     </motion.div>
                     <motion.div
                       className="absolute bottom-4 right-4 text-sm text-muted-foreground bg-cosmic-card/80 px-3 py-1.5 rounded-full border border-purple-400/20"
@@ -574,12 +395,11 @@ const Session = () => {
               {/* Chat Interface */}
               <GlowCard className="h-64">
                 <div className="h-full flex flex-col">
-                  {/* Chat History */}
                   <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
                     {displayMessages.length === 0 ? (
                       <div className="text-center text-muted-foreground py-8">
                         <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                        <p>{useTextMode ? "Type your question to start learning!" : "Speak or type to interact with Priya AI"}</p>
+                        <p>Type your question to start learning!</p>
                       </div>
                     ) : (
                       <>
@@ -613,14 +433,13 @@ const Session = () => {
                     )}
                   </div>
 
-                  {/* Input */}
                   <div className="flex gap-2">
                     <input
                       type="text"
                       value={message}
                       onChange={(e) => setMessage(e.target.value)}
                       onKeyPress={(e) => e.key === "Enter" && !priyaAI.isLoading && handleSendMessage()}
-                      placeholder={useTextMode ? "Ask Priya anything..." : (isConnected ? "Type or speak your question..." : "Switch to text mode or connect voice...")}
+                      placeholder="Ask Priya anything..."
                       className="flex-1 px-4 py-2.5 rounded-xl bg-cosmic-card border border-border text-foreground placeholder-muted-foreground focus:border-cyan-400/60 focus:outline-none text-sm"
                       disabled={priyaAI.isLoading}
                     />
@@ -673,7 +492,10 @@ const Session = () => {
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">Audio</span>
                     <motion.button
-                      onClick={() => setIsMuted(!isMuted)}
+                      onClick={() => {
+                        setIsMuted(!isMuted);
+                        if (!isMuted) tts.stop();
+                      }}
                       className={`p-2 rounded-lg ${isMuted ? 'bg-red-500/20 text-red-400' : 'bg-cosmic-card text-foreground'} border border-border/50`}
                       whileHover={{ scale: 1.1 }}
                       whileTap={{ scale: 0.9 }}
@@ -683,10 +505,9 @@ const Session = () => {
                   </div>
                 </div>
 
-                {/* Proceed to quiz button */}
                 <NeonButton 
                   onClick={() => {
-                    if (isConnected) stopConversation();
+                    tts.stop();
                     setPhase("post");
                   }} 
                   className="w-full mt-4"
@@ -715,26 +536,42 @@ const Session = () => {
               </div>
 
               <div className="space-y-4 mb-6">
-                <div>
-                  <p className="text-foreground mb-2">How confident do you feel now?</p>
-                  <div className="flex gap-2">
-                    {["😟", "😐", "🙂", "😊", "🤩"].map((emoji, idx) => (
-                      <motion.button
-                        key={idx}
-                        className="flex-1 py-3 text-2xl rounded-xl bg-cosmic-card hover:bg-cosmic-card/80 border border-border/50"
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.95 }}
-                      >
-                        {emoji}
-                      </motion.button>
-                    ))}
-                  </div>
+                <div className="flex gap-4 justify-center">
+                  {["😟", "😐", "🙂", "😊", "🤩"].map((emoji, idx) => (
+                    <motion.button
+                      key={idx}
+                      className="text-3xl p-2 rounded-xl hover:bg-cosmic-card transition-all"
+                      whileHover={{ scale: 1.2 }}
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => {
+                        toast({
+                          title: "Thank you for your feedback!",
+                          description: "Your rating helps Priya AI improve.",
+                        });
+                      }}
+                    >
+                      {emoji}
+                    </motion.button>
+                  ))}
                 </div>
               </div>
 
-              <NeonButton onClick={() => setPhase("quiz")} className="w-full">
-                Start Quiz (10 Questions)
-              </NeonButton>
+              <div className="space-y-3">
+                <NeonButton 
+                  onClick={() => setPhase("quiz")} 
+                  className="w-full"
+                >
+                  Take Assessment Quiz 📝
+                </NeonButton>
+                <motion.button
+                  onClick={() => navigate("/dashboard")}
+                  className="w-full py-3 rounded-xl border border-border text-foreground hover:bg-cosmic-card transition-all"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  Skip & Return to Dashboard
+                </motion.button>
+              </div>
             </GlowCard>
           </motion.div>
         );
@@ -743,17 +580,17 @@ const Session = () => {
         const currentQ = quizQuestions[currentQuizQuestion];
         return (
           <motion.div
-            key={currentQuizQuestion}
-            initial={{ opacity: 0, x: 50 }}
+            initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -50 }}
             className="max-w-2xl mx-auto"
           >
             <GlowCard>
-              <div className="flex justify-between items-center mb-6">
-                <span className="text-sm text-cyan-400">Question {currentQuizQuestion + 1} of {quizQuestions.length}</span>
+              <div className="flex items-center justify-between mb-6">
                 <span className="text-sm text-muted-foreground">
-                  {quizAnswers.filter((a, i) => a === quizQuestions[i].correct).length} correct so far
+                  Question {currentQuizQuestion + 1} of {quizQuestions.length}
+                </span>
+                <span className="text-cyan-400 font-medium">
+                  {Math.round(((currentQuizQuestion) / quizQuestions.length) * 100)}% Complete
                 </span>
               </div>
 
@@ -764,11 +601,11 @@ const Session = () => {
                   <motion.button
                     key={idx}
                     onClick={() => handleQuizAnswer(idx)}
-                    className="w-full text-left px-4 py-4 rounded-xl bg-cosmic-card border-2 border-border text-foreground hover:border-cyan-400/50 hover:bg-cyan-400/5 transition-all"
-                    whileHover={{ scale: 1.01, x: 5 }}
-                    whileTap={{ scale: 0.99 }}
+                    className="w-full text-left px-4 py-3 rounded-xl bg-cosmic-card border border-border/50 text-foreground hover:border-cyan-400/50 hover:bg-cyan-400/5 transition-all"
+                    whileHover={{ scale: 1.02, x: 10 }}
+                    whileTap={{ scale: 0.98 }}
                   >
-                    <span className="inline-block w-8 h-8 rounded-full bg-cosmic-dark text-center leading-8 mr-3 text-sm">
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-cyan-400/20 text-cyan-400 text-sm mr-3">
                       {String.fromCharCode(65 + idx)}
                     </span>
                     {option}
@@ -776,8 +613,7 @@ const Session = () => {
                 ))}
               </div>
 
-              {/* Progress bar */}
-              <div className="mt-6 h-2 bg-cosmic-card rounded-full overflow-hidden">
+              <div className="mt-6 h-1 bg-cosmic-card rounded-full overflow-hidden">
                 <motion.div
                   className="h-full bg-gradient-to-r from-cyan-400 to-teal-400"
                   initial={{ width: 0 }}
@@ -845,7 +681,7 @@ const Session = () => {
                     setCurrentQuizQuestion(0);
                     setTimeLeft(40 * 60);
                     setConfidenceLevel(null);
-                    setChatHistory([]);
+                    priyaAI.clearMessages();
                   }}
                   className="px-4 py-3 rounded-xl border border-border text-foreground hover:bg-cosmic-card transition-all"
                   whileHover={{ scale: 1.02 }}
@@ -864,7 +700,6 @@ const Session = () => {
     <div className="min-h-screen bg-cosmic-dark text-foreground relative overflow-hidden">
       <CosmicBackground />
 
-      {/* Confetti Effect */}
       <AnimatePresence>
         {showConfetti && (
           <div className="fixed inset-0 pointer-events-none z-50">
@@ -885,7 +720,6 @@ const Session = () => {
         )}
       </AnimatePresence>
 
-      {/* Header */}
       <header className="relative z-10 p-4 flex items-center justify-between">
         <motion.button
           onClick={() => navigate("/dashboard")}
@@ -896,7 +730,6 @@ const Session = () => {
           <span>Exit Session</span>
         </motion.button>
 
-        {/* Timer */}
         {phase === "teaching" && (
           <div className="flex items-center gap-4">
             <motion.div
@@ -908,14 +741,7 @@ const Session = () => {
             >
               <div className="relative w-10 h-10">
                 <svg className="w-10 h-10 -rotate-90">
-                  <circle
-                    cx="20"
-                    cy="20"
-                    r="16"
-                    fill="none"
-                    stroke="rgba(255,255,255,0.1)"
-                    strokeWidth="3"
-                  />
+                  <circle cx="20" cy="20" r="16" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
                   <motion.circle
                     cx="20"
                     cy="20"
@@ -951,10 +777,9 @@ const Session = () => {
           </div>
         )}
 
-        <div className="w-24" /> {/* Spacer */}
+        <div className="w-24" />
       </header>
 
-      {/* Main Content */}
       <main className="relative z-10 container mx-auto px-4 py-4 h-[calc(100vh-80px)]">
         <AnimatePresence mode="wait">
           {renderPhaseContent()}
