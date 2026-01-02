@@ -39,7 +39,7 @@ const GlowCard = ({
     >
       {/* Inner glow */}
       <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-cyan-500/5 to-purple-500/5 pointer-events-none" />
-      <div className="relative z-10">{children}</div>
+      <div className="relative z-10 h-full">{children}</div>
     </motion.div>
   );
 };
