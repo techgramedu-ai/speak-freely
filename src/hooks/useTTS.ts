@@ -1,17 +1,21 @@
 import { useState, useRef, useCallback } from "react";
+import { useToast } from "@/hooks/use-toast";
 
 interface UseTTSOptions {
   voiceId?: string;
   onStart?: () => void;
   onEnd?: () => void;
+  onError?: (error: string) => void;
 }
 
 export const useTTS = (options: UseTTSOptions = {}) => {
-  const { voiceId = "EXAVITQu4vr4xnSDxMaL", onStart, onEnd } = options;
+  const { voiceId = "EXAVITQu4vr4xnSDxMaL", onStart, onEnd, onError } = options;
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
+  const { toast } = useToast();
 
   const stop = useCallback(() => {
     if (audioRef.current) {
@@ -76,18 +80,31 @@ export const useTTS = (options: UseTTSOptions = {}) => {
       };
       
       await audio.play();
-    } catch (error) {
-      console.error("TTS error:", error);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "TTS failed";
+      console.error("TTS error:", err);
+      setError(errorMessage);
       setIsSpeaking(false);
+      onError?.(errorMessage);
+      
+      // Show toast for quota/credit errors
+      if (errorMessage.includes("quota") || errorMessage.includes("401") || errorMessage.includes("402")) {
+        toast({
+          variant: "destructive",
+          title: "Voice credits exhausted",
+          description: "Text responses will continue without voice. Add ElevenLabs credits to restore voice.",
+        });
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [voiceId, stop, onStart, onEnd]);
+  }, [voiceId, stop, onStart, onEnd, onError, toast]);
 
   return {
     speak,
     stop,
     isSpeaking,
     isLoading,
+    error,
   };
 };
