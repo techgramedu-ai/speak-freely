@@ -8,11 +8,41 @@ interface UseTTSOptions {
   onError?: (error: string) => void;
 }
 
+// Browser Speech Synthesis fallback
+const speakWithBrowser = (text: string, onStart?: () => void, onEnd?: () => void): boolean => {
+  if (!('speechSynthesis' in window)) {
+    return false;
+  }
+  
+  // Cancel any ongoing speech
+  window.speechSynthesis.cancel();
+  
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'en-IN'; // Indian English
+  utterance.rate = 0.9;
+  utterance.pitch = 1.1;
+  
+  // Try to find an Indian English voice
+  const voices = window.speechSynthesis.getVoices();
+  const indianVoice = voices.find(v => v.lang.includes('en-IN') || v.lang.includes('hi'));
+  if (indianVoice) {
+    utterance.voice = indianVoice;
+  }
+  
+  utterance.onstart = () => onStart?.();
+  utterance.onend = () => onEnd?.();
+  utterance.onerror = () => onEnd?.();
+  
+  window.speechSynthesis.speak(utterance);
+  return true;
+};
+
 export const useTTS = (options: UseTTSOptions = {}) => {
   const { voiceId = "EXAVITQu4vr4xnSDxMaL", onStart, onEnd, onError } = options;
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [usingFallback, setUsingFallback] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
   const { toast } = useToast();
@@ -21,6 +51,10 @@ export const useTTS = (options: UseTTSOptions = {}) => {
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
+    }
+    // Also stop browser speech synthesis
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
     }
     setIsSpeaking(false);
   }, []);
@@ -32,6 +66,7 @@ export const useTTS = (options: UseTTSOptions = {}) => {
     stop();
     
     setIsLoading(true);
+    setError(null);
     
     try {
       const response = await fetch(
@@ -47,8 +82,8 @@ export const useTTS = (options: UseTTSOptions = {}) => {
       );
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "TTS request failed");
+        const errorData = await response.json();
+        throw new Error(errorData.error || "TTS request failed");
       }
 
       const audioBlob = await response.blob();
@@ -66,6 +101,7 @@ export const useTTS = (options: UseTTSOptions = {}) => {
       
       audio.onplay = () => {
         setIsSpeaking(true);
+        setUsingFallback(false);
         onStart?.();
       };
       
@@ -82,23 +118,48 @@ export const useTTS = (options: UseTTSOptions = {}) => {
       await audio.play();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "TTS failed";
-      console.error("TTS error:", err);
+      console.error("ElevenLabs TTS error, trying browser fallback:", err);
+      
+      // Try browser fallback
+      const fallbackSuccess = speakWithBrowser(
+        text,
+        () => {
+          setIsSpeaking(true);
+          setUsingFallback(true);
+          onStart?.();
+        },
+        () => {
+          setIsSpeaking(false);
+          onEnd?.();
+        }
+      );
+      
+      if (fallbackSuccess) {
+        setIsLoading(false);
+        // Show info toast only once about fallback
+        if (!usingFallback) {
+          toast({
+            title: "Using browser voice",
+            description: "ElevenLabs credits exhausted. Using browser speech synthesis.",
+          });
+        }
+        return;
+      }
+      
+      // Both failed
       setError(errorMessage);
       setIsSpeaking(false);
       onError?.(errorMessage);
       
-      // Show toast for quota/credit errors
-      if (errorMessage.includes("quota") || errorMessage.includes("401") || errorMessage.includes("402")) {
-        toast({
-          variant: "destructive",
-          title: "Voice credits exhausted",
-          description: "Text responses will continue without voice. Add ElevenLabs credits to restore voice.",
-        });
-      }
+      toast({
+        variant: "destructive",
+        title: "Voice unavailable",
+        description: "Text responses will continue without voice.",
+      });
     } finally {
       setIsLoading(false);
     }
-  }, [voiceId, stop, onStart, onEnd, onError, toast]);
+  }, [voiceId, stop, onStart, onEnd, onError, toast, usingFallback]);
 
   return {
     speak,
@@ -106,5 +167,6 @@ export const useTTS = (options: UseTTSOptions = {}) => {
     isSpeaking,
     isLoading,
     error,
+    usingFallback,
   };
 };
