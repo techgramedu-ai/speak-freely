@@ -296,10 +296,10 @@ const Session = () => {
 
       case "teaching":
         return (
-          <div className="grid lg:grid-cols-12 gap-4 h-full">
+          <div className="grid lg:grid-cols-12 gap-4 h-full max-h-[calc(100vh-120px)] overflow-hidden">
             {/* Left Panel - AI Tutor Video Avatar */}
-            <div className="lg:col-span-3">
-              <GlowCard className="h-full flex flex-col p-4">
+            <div className="lg:col-span-3 overflow-hidden">
+              <GlowCard className="h-full flex flex-col p-4 overflow-hidden">
                 <VideoAvatar isSpeaking={isSpeaking || priyaAI.isStreaming} className="w-full aspect-[3/4] mb-4" />
                 
                 {/* Status indicator */}
@@ -349,9 +349,9 @@ const Session = () => {
             </div>
 
             {/* Center Panel - Teaching Area + Chat */}
-            <div className="lg:col-span-6 flex flex-col gap-4">
+            <div className="lg:col-span-6 flex flex-col gap-4 overflow-hidden">
               {/* Visual Teaching Area */}
-              <GlowCard className="flex-1 min-h-[300px]">
+              <GlowCard className="shrink-0 h-[280px]">
                 <div className="h-full flex flex-col">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
@@ -393,9 +393,9 @@ const Session = () => {
               </GlowCard>
 
               {/* Chat Interface */}
-              <GlowCard className="h-64">
-                <div className="h-full flex flex-col">
-                  <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
+              <GlowCard className="flex-1 min-h-0 overflow-hidden">
+                <div className="h-full flex flex-col overflow-hidden">
+                  <div className="flex-1 min-h-0 overflow-y-auto space-y-3 mb-4 pr-2 scrollbar-thin scrollbar-thumb-cyan-400/30 scrollbar-track-transparent">
                     {displayMessages.length === 0 ? (
                       <div className="text-center text-muted-foreground py-8">
                         <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -464,8 +464,8 @@ const Session = () => {
             </div>
 
             {/* Right Panel - Quick Actions */}
-            <div className="lg:col-span-3">
-              <GlowCard className="h-full flex flex-col p-4">
+            <div className="lg:col-span-3 overflow-hidden">
+              <GlowCard className="h-full flex flex-col p-4 overflow-hidden">
                 <h4 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
                   <HelpCircle className="w-4 h-4 text-cyan-400" />
                   Quick Actions
